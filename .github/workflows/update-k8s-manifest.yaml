@@ -1,0 +1,59 @@
+name: Update Kubernetes Deployment
+
+on:
+  workflow_run:
+    workflows: ["Test, Build and Push Docker Image"]  
+    types:
+      - completed
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/nodejs-cicd-app
+  MANIFEST_REPO: https://github.com/touhiddevops/manifests-repo  
+  DEPLOYMENT_FILE: k8s-manifests/deployment.yml  
+
+jobs:
+  update-manifest:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-version
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          path: ./downloaded-artifacts
+
+      - name: Read version from artifact
+        id: read_version
+        run: |
+          VERSION=$(cat ./downloaded-artifacts/version.txt)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "App version from artifact: $VERSION"
+
+      - name: Checkout Kubernetes Manifest Repository
+        uses: actions/checkout@v4
+        with:
+          repository: touhiddevops/manifests-repo 
+          token: ${{ secrets.K8S_MANIFEST_PAT }}
+
+      - name: Update Deployment Manifest
+        run: |
+          echo "Updating deployment with version: $VERSION"
+          sed -i "s|image: $IMAGE_NAME:.*|image: $IMAGE_NAME:$VERSION|g" $DEPLOYMENT_FILE
+          
+          # Verify the change was made
+          grep -n "image: $IMAGE_NAME" $DEPLOYMENT_FILE
+
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # This is for private repo
+          # git remote set-url origin https://x-access-token:${{ secrets.K8S_MANIFEST_PAT }}@github.com/maxhaz71/ArgoCD-Project-Manifests-Repo.git
+          
+          git commit -am "Update deployment to version: ${{ env.VERSION }}"
+          git push origin main
+
